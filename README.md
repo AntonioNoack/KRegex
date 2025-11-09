@@ -1,11 +1,14 @@
 # KRegex
 
-Lightweight regex implementation in Kotlin
+Lightweight (little code) regex implementation in Kotlin
 
 ## Supports:
 - Characters ofc
 - ^$
-- (|+?)
+- (|)
+- [] for ranges
+- +?*
+- \w\W, \d\D, \s\S
 - {min,max}, {min}, {min,}, but be careful, large numbers will create tons of objects
 
 ## Issues:

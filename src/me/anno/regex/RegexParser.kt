@@ -25,7 +25,23 @@ object RegexParser {
         constructor(type: TokenType, min: Int, max: Int?) : this(type, TRUE, min, max)
     }
 
-    private fun tokenize(pat: CharSequence): List<Token> {
+    private val IS_DIGIT = Condition { it in '0'..'9' }
+    private val ISNT_DIGIT = Condition { it !in '0'..'9' }
+    private val IS_LETTER = Condition { it.isLetterOrDigit() || it == '_' }
+    private val ISNT_LETTER = Condition { !(it.isLetterOrDigit() || it == '_') }
+    private val IS_WHITESPACE = Condition { it.isWhitespace() }
+    private val ISNT_WHITESPACE = Condition { !it.isWhitespace() }
+    private val ASCII_CACHE = Array(127 - 32) { idx ->
+        val char = ' ' + idx
+        Condition { it == char }
+    }
+
+    private fun tokenize(pattern: CharSequence): List<Token> {
+        val baseTokens = parseBaseTokens(pattern)
+        return addExplicitConcatTokens(baseTokens)
+    }
+
+    private fun parseBaseTokens(pat: CharSequence): List<Token> {
         val tokens = ArrayList<Token>()
         var i = 0
         while (i < pat.length) {
@@ -50,13 +66,16 @@ object RegexParser {
                     require(i + 1 < pat.length) { "Dangling escape" }
                     val next = pat[i + 1]
                     tokens += when (next) {
-                        'd' -> Token(TokenType.LITERAL) { it in '0'..'9' }
-                        'D' -> Token(TokenType.LITERAL) { it !in '0'..'9' }
-                        'w' -> Token(TokenType.LITERAL) { it.isLetterOrDigit() || it == '_' }
-                        'W' -> Token(TokenType.LITERAL) { !(it.isLetterOrDigit() || it == '_') }
-                        's' -> Token(TokenType.LITERAL) { it in setOf(' ', '\t', '\r', '\n', '\u000C') }
-                        'S' -> Token(TokenType.LITERAL) { it !in setOf(' ', '\t', '\r', '\n', '\u000C') }
-                        else -> Token(TokenType.LITERAL) { it == next }
+                        'd' -> Token(TokenType.LITERAL, IS_DIGIT)
+                        'D' -> Token(TokenType.LITERAL, ISNT_DIGIT)
+                        'w' -> Token(TokenType.LITERAL, IS_LETTER)
+                        'W' -> Token(TokenType.LITERAL, ISNT_LETTER)
+                        's' -> Token(TokenType.LITERAL, IS_WHITESPACE)
+                        'S' -> Token(TokenType.LITERAL, ISNT_WHITESPACE)
+                        else -> {
+                            val condition = ASCII_CACHE.getOrNull(next.code - 32) ?: Condition { it == next }
+                            Token(TokenType.LITERAL, condition)
+                        }
                     }
                     i++
                 }
@@ -88,8 +107,10 @@ object RegexParser {
             }
             i++
         }
+        return tokens
+    }
 
-        // Add explicit CONCAT tokens
+    private fun addExplicitConcatTokens(tokens: List<Token>): List<Token> {
         val result = ArrayList<Token>()
         for (j in tokens.indices) {
             val t1 = tokens[j]
@@ -105,7 +126,15 @@ object RegexParser {
     }
 
     private fun shouldConcat(t1: Token, t2: Token): Boolean {
-        if (t1.type in setOf(TokenType.LITERAL, TokenType.STAR, TokenType.PLUS, TokenType.QUESTION, TokenType.CLOSE, TokenType.START_ANCHOR)) {
+        if (t1.type in setOf(
+                TokenType.LITERAL,
+                TokenType.STAR,
+                TokenType.PLUS,
+                TokenType.QUESTION,
+                TokenType.CLOSE,
+                TokenType.START_ANCHOR
+            )
+        ) {
             if (t2.type in setOf(TokenType.LITERAL, TokenType.OPEN, TokenType.END_ANCHOR)) return true
         }
         // Also, a REPEAT can follow something and we might need concat after it:
@@ -183,7 +212,9 @@ object RegexParser {
 
     // -------- Helpers for fragment manipulation (clone, concat, star, question) --------
 
-    // Clone the subgraph of a fragment; returns a new fragment (fresh states)
+    /**
+     * Clone the subgraph of a fragment; returns a new fragment (fresh states)
+     * */
     private fun cloneFragment(f: Edge): Edge {
         // Collect nodes reachable from f.start (should be self-contained)
         val visited = HashSet<Node>()
@@ -241,15 +272,17 @@ object RegexParser {
         return Edge(start, out)
     }
 
-    // Build optional repetition of up to 'k' copies (k can be 0)
-    private fun fragOptionalUpTo(base: Edge, k: Int): Edge {
+    /**
+     * Build optional repetition of up to 'k' copies (k can be 0)
+     * */
+    private fun fragOptionalUpTo(base: Edge, times: Int): Edge {
         // if k == 0 -> epsilon fragment
-        if (k == 0) {
+        if (times == 0) {
             val s = Node()
             return Edge(s, s)
         }
         var acc: Edge? = null
-        for (i in 1..k) {
+        repeat(times) {
             val clone = cloneFragment(base)
             val opt = fragQuestion(clone)
             acc = if (acc == null) opt else fragConcat(acc, opt)
@@ -257,14 +290,16 @@ object RegexParser {
         return acc!! // k>=1 => not null
     }
 
-    // Concatenate 'times' exact copies of base. If times == 0, return epsilon fragment.
+    /**
+     * Concatenate 'times' exact copies of base. If times == 0, return epsilon fragment.
+     * */
     private fun fragExactRepeat(base: Edge, times: Int): Edge {
         if (times == 0) {
             val s = Node()
             return Edge(s, s)
         }
         var acc: Edge? = null
-        for (i in 1..times) {
+        repeat(times) {
             val clone = cloneFragment(base)
             acc = if (acc == null) clone else fragConcat(acc, clone)
         }
@@ -279,12 +314,12 @@ object RegexParser {
 
         val stack = ArrayList<Edge>()
 
-        for (t in postfix) {
-            when (t.type) {
+        for (token in postfix) {
+            when (token.type) {
                 TokenType.LITERAL -> {
                     val start = Node()
                     val end = Node()
-                    val cond = t.condition
+                    val cond = token.condition
                     start.transitions += Transition(end, true, cond)
                     stack += Edge(start, end)
                 }
@@ -321,8 +356,8 @@ object RegexParser {
                 }
                 TokenType.REPEAT -> {
                     val e = stack.removeLast()
-                    val min = t.min
-                    val max = t.max // null means unbounded
+                    val min = token.min
+                    val max = token.max // null means unbounded
 
                     // exact required copies:
                     val required = fragExactRepeat(e, min)

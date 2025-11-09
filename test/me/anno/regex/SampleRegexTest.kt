@@ -22,4 +22,6 @@ fun main() {
         println("Match: '${input.substring(s, e)}' at [$s,$e)")
         false
     }
+
+    println(setOf(' ', '\t', '\r', '\n', '\u000C').map { it.isWhitespace() })
 }
