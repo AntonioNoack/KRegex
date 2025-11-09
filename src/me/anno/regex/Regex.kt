@@ -2,7 +2,10 @@ package me.anno.regex
 
 data class Regex(val pattern: CharSequence) {
 
-    val startState = RegexParser.parsePattern(pattern.ifEmpty { "^$" })
+    val startState = run {
+        val tokens = RegexTokenizer.tokenize(pattern.ifEmpty { "^$" })
+        RegexGraphBuilder.tokensToGraph(tokens)
+    }
 
     /**
      * Exact matches only.
@@ -11,9 +14,9 @@ data class Regex(val pattern: CharSequence) {
     fun matches(input: CharSequence, start: Int = 0, end: Int = input.length): Boolean {
         var current = findSiblingStates(startState, start == 0, start == input.length)
         for (pos in start until end) {
-            val nextStates = HashSet<Node>()
+            val nextStates = HashSet<RegexNode>()
             for (s in current) {
-                for (t in s.transitions) {
+                for (t in s.edges) {
                     if (t.consumeChar && t.condition.test(input[pos])) {
                         nextStates += findSiblingStates(t.next, pos == 0, pos + 1 == input.length)
                     }
@@ -32,15 +35,15 @@ data class Regex(val pattern: CharSequence) {
         return forEachNonOverlappingMatch(input, start, end) { _, _ -> true }
     }
 
-    private fun findSiblingStates(state: Node, isStart: Boolean, isEnd: Boolean): Set<Node> {
+    private fun findSiblingStates(state: RegexNode, isStart: Boolean, isEnd: Boolean): Set<RegexNode> {
         if (!isStart && state.mustBeStart) return emptySet()
         if (!isEnd && state.mustBeEnd) return emptySet()
 
-        val found = HashSet<Node>().apply { add(state) }
-        val todo = ArrayList<Node>().apply { add(state) }
+        val found = HashSet<RegexNode>().apply { add(state) }
+        val todo = ArrayList<RegexNode>().apply { add(state) }
         while (todo.isNotEmpty()) {
             val s = todo.removeLast()
-            for (t in s.transitions) {
+            for (t in s.edges) {
                 if (!t.consumeChar &&
                     (isStart || !t.next.mustBeStart) &&
                     (isEnd || !t.next.mustBeEnd) &&
@@ -54,7 +57,7 @@ data class Regex(val pattern: CharSequence) {
         return found
     }
 
-    private fun addStartsAt(input: CharSequence, p: Int, target: HashMap<Node, HashSet<Int>>) {
+    private fun addStartsAt(input: CharSequence, p: Int, target: HashMap<RegexNode, HashSet<Int>>) {
         val startClosure = findSiblingStates(startState, p == 0, p + 1 == input.length)
         for (s in startClosure) {
             target.getOrPut(s) { HashSet() }.add(p)
@@ -83,7 +86,7 @@ data class Regex(val pattern: CharSequence) {
         var matchCount = 0
 
         // Map from NFA state to set of starting positions
-        var current: HashMap<Node, HashSet<Int>> = HashMap()
+        var current: HashMap<RegexNode, HashSet<Int>> = HashMap()
 
         // Initially allow matches to start at position 0
         addStartsAt(input, 0, current)
@@ -93,11 +96,11 @@ data class Regex(val pattern: CharSequence) {
 
         for (pos in start until end) {
             val ch = input[pos]
-            val next = HashMap<Node, HashSet<Int>>()
+            val next = HashMap<RegexNode, HashSet<Int>>()
 
             // Advance all active NFA states
             for ((state, starts) in current) {
-                for (t in state.transitions) {
+                for (t in state.edges) {
                     if (t.consumeChar && t.condition.test(ch)) {
                         val closure = findSiblingStates(t.next, pos == 0, pos + 1 == input.length)
                         for (s in closure) {
@@ -153,7 +156,7 @@ data class Regex(val pattern: CharSequence) {
         var pos = start
 
         while (pos < end) {
-            var current = HashMap<Node, HashSet<Int>>()
+            var current = HashMap<RegexNode, HashSet<Int>>()
 
             // Initialize NFA from this start position
             addStartsAt(input, pos, current)
@@ -164,11 +167,11 @@ data class Regex(val pattern: CharSequence) {
             // Advance NFA until no states remain
             while (i < end && current.isNotEmpty()) {
                 val ch = input[i]
-                val next = HashMap<Node, HashSet<Int>>()
+                val next = HashMap<RegexNode, HashSet<Int>>()
 
                 // Propagate transitions
                 for ((state, startSet) in current) {
-                    for (t in state.transitions) {
+                    for (t in state.edges) {
                         if (t.consumeChar && t.condition.test(ch)) {
                             val closure = findSiblingStates(t.next, i == 0, i + 1 == input.length)
                             for (s in closure) {

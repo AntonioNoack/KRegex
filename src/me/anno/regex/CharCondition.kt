@@ -1,9 +1,9 @@
 package me.anno.regex
 
-fun interface Condition {
+fun interface CharCondition {
     fun test(char: Char): Boolean
 
     companion object {
-        val TRUE = Condition { true }
+        val TRUE = CharCondition { true }
     }
 }

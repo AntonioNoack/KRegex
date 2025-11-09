@@ -1,12 +1,12 @@
 package me.anno.regex
 
-class Node {
+class RegexNode {
 
     var mustBeStart: Boolean = false
     var mustBeEnd: Boolean = false
     var isEnd: Boolean = false
 
-    val transitions = ArrayList<Transition>()
+    val edges = ArrayList<RegexEdge>()
 
     /**
      * Careful when printing this!, can easily stack-overflow for recursive regexes.
@@ -19,7 +19,7 @@ class Node {
             isEnd -> "E:"
             else -> ""
         } + "${
-            transitions.map {
+            edges.map {
                 "${if (it.consumeChar) "c" else ""}${
                     if (it.condition.test(0.toChar())) ""
                     else {
